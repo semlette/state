@@ -1,8 +1,10 @@
 export class State<T> {
 	#lastValue: T;
+	#defaultValue: T;
 	#listeners: { [key: string]: ValueSubscription<T> } = {};
 
 	constructor(defaultValue: T) {
+		this.#defaultValue = defaultValue;
 		this.#lastValue = defaultValue;
 	}
 
@@ -26,11 +28,20 @@ export class State<T> {
 		return this.#lastValue;
 	}
 
+	get defaultValue(): T {
+		return this.#defaultValue;
+	}
+
 	dispose() {
 		for (const listener in this.#listeners) {
 			this.removeListener(this.#listeners[listener]);
 		}
 	}
+}
+
+export abstract class StringableState<T> extends State<T> {
+	abstract marshalString(value: T): string;
+	abstract unmarshalString(string: string): T;
 }
 
 export type ValueCallback<T> = (value: T) => void;
@@ -99,6 +110,65 @@ export function eventListener<T>(
 }
 
 export type StateUpdateValidator<T> = (newValue: T) => boolean;
+
+export function persistStateToURLArgument<T>(
+	state: StringableState<T>,
+	argumentName: string,
+): ValueSubscription<T> {
+	const params = new URLSearchParams(window.location.search);
+	const param = params.get(argumentName);
+
+	if (param !== null) {
+		if (param !== state.marshalString(state.defaultValue)) {
+			state.setValue(state.unmarshalString(param));
+		}
+	}
+
+	function callback(value: T) {
+		const params = new URLSearchParams(window.location.search);
+		const param = params.get(argumentName);
+		if (param !== null) {
+			compareAndSetURLArgument(
+				params,
+				argumentName,
+				param,
+				state.marshalString(value),
+			);
+		} else {
+			if (state.valueOf() !== state.defaultValue) {
+				setURLArgument(
+					params,
+					argumentName,
+					state.marshalString(state.valueOf()),
+				);
+			}
+		}
+	}
+	const subscription = new ValueSubscription(id(), state, callback);
+	state.addListener(subscription);
+	return subscription;
+}
+
+function compareAndSetURLArgument(
+	reuseableParams: URLSearchParams,
+	argumentName: string,
+	paramValue: string,
+	stringValue: string,
+) {
+	if (paramValue !== stringValue) {
+		setURLArgument(reuseableParams, argumentName, stringValue);
+	}
+}
+
+function setURLArgument(
+	reuseableParams: URLSearchParams,
+	argumentName: string,
+	value: string,
+) {
+	reuseableParams.set(argumentName, value);
+	const newURL = window.location.pathname + "?" + reuseableParams.toString();
+	window.history.replaceState(null, "", newURL);
+}
 
 function id() {
 	return Math.random().toString(36).substr(2, 6);
